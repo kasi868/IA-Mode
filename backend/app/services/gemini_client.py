@@ -42,11 +42,19 @@ class LLMClient(Protocol):
 
 class GeminiClient:
     def __init__(self, settings: Settings) -> None:
-        from google import genai
-
         if not settings.gemini_api_key:
             raise LLMError("GEMINI_API_KEY is not set on the server")
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        # Dependency construction happens before an endpoint handler runs.  Convert
+        # SDK/import/configuration failures here as well, otherwise FastAPI exposes
+        # them as an unhelpful raw 500 instead of our safe AI-unavailable response.
+        try:
+            from google import genai
+
+            self._client = genai.Client(api_key=settings.gemini_api_key)
+        except Exception as exc:  # noqa: BLE001 - provider imports vary by deployment image
+            reason = _describe(exc)
+            log_event(logger, "gemini_client_init_error", error=reason)
+            raise LLMError(reason) from exc
         self._timeout = settings.gemini_timeout_seconds
 
     async def _call(self, model: str, prompt: str, config) -> object:
@@ -71,9 +79,17 @@ class GeminiClient:
         raise LLMError(f"{model}: {reason}") from last_exc
 
     async def generate_json(self, *, model: str, prompt: str, schema: type[T]) -> T:
-        from google.genai import types
+        # Keep SDK config construction inside the provider error boundary.  A stale
+        # google-genai image or an unsupported structured-output configuration used
+        # to bypass _call() and become HTTP 500 on Render.
+        try:
+            from google.genai import types
 
-        config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema)
+            config = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema)
+        except Exception as exc:  # noqa: BLE001
+            reason = _describe(exc)
+            log_event(logger, "gemini_json_config_error", model=model, error=reason)
+            raise LLMError(f"{model}: {reason}") from exc
         resp = await self._call(model, prompt, config)
         parsed = getattr(resp, "parsed", None)
         if isinstance(parsed, schema):

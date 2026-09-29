@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from pydantic import BaseModel
 
 from app.core.config import Settings
 from app.services.gemini_client import GeminiClient, LLMError, _describe, _is_transient
@@ -25,3 +26,17 @@ def test_transient_http_errors_are_retried(status):
 
 def test_timeout_is_transient():
     assert _is_transient(asyncio.TimeoutError())
+
+
+def test_json_config_error_is_mapped_to_llm_error(monkeypatch):
+    """An SDK/schema mismatch must never surface as an API HTTP 500."""
+    client = object.__new__(GeminiClient)
+
+    class BrokenConfig:
+        def __init__(self, **_):
+            raise RuntimeError("provider schema error with private prompt")
+
+    import google.genai.types as types
+    monkeypatch.setattr(types, "GenerateContentConfig", BrokenConfig)
+    with pytest.raises(LLMError, match="Gemini request failed"):
+        asyncio.run(client.generate_json(model="test-model", prompt="private", schema=BaseModel))

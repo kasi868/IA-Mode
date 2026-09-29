@@ -22,6 +22,7 @@ def test_process_returns_analysis_and_reply(client, fake_llm):
     assert data["reply"].startswith("Emi ledu")
     # the language rule must be in the writer prompt
     assert "same language AND script" in fake_llm.prompts[-1]
+    assert "TECHNICAL QUESTIONS" in fake_llm.prompts[-1]
 
 
 def test_ended_conversation_gets_no_reply(client, fake_llm):
@@ -104,6 +105,17 @@ def test_message_text_cannot_break_out_of_conversation_block(client, fake_llm):
 def test_health_is_public(client):
     r = client.get("/v1/health")
     assert r.status_code == 200 and r.json()["status"] == "ok"
+
+
+def test_unexpected_error_is_safe_and_correlated(client, fake_llm):
+    async def broken(*, model, prompt, schema):
+        raise RuntimeError("private mail body must not appear in the response")
+
+    fake_llm.generate_json = broken
+    r = client.post("/v1/messages/process", json=body(), headers={**AUTH, "X-Request-ID": "test-request"})
+    assert r.status_code == 500
+    assert r.json()["request_id"] == "test-request"
+    assert "private mail body" not in r.text
 
 
 def test_new_chat_apps_are_accepted(client, fake_llm):
