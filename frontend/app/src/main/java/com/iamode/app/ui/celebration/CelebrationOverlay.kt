@@ -77,6 +77,8 @@ import com.iamode.app.domain.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -94,11 +96,12 @@ class CelebrationViewModel @Inject constructor(
 ) : ViewModel() {
     var active by mutableStateOf<ActiveCelebration?>(null)
         private set
+    private val mailVisible = MutableStateFlow(false)
     val sound = settings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     init {
         viewModelScope.launch {
-            coordinator.next.collect { c ->
+            combine(coordinator.next, mailVisible) { celebration, visible -> celebration?.takeIf { visible } }.collect { c ->
                 if (c == null || active != null) return@collect
                 val type = CelebrationType.entries.firstOrNull { it.name == c.type } ?: return@collect
                 // Claim first: only the caller that flips ELIGIBLE -> SHOWN plays it. Same email = once.
@@ -114,6 +117,13 @@ class CelebrationViewModel @Inject constructor(
     }
 
     fun dismiss() { active = null }
+    fun openDetails(emailId: String) {
+        // Clear synchronously before route navigation; DB state follows on the ViewModel scope.
+        // This closes the small window where Mail becomes visible while the old overlay is active.
+        active = null
+        viewModelScope.launch { coordinator.openDetails(emailId) }
+    }
+    fun setMailVisible(visible: Boolean) { mailVisible.value = visible }
 }
 
 /** Device capability for the effect: fewer particles on low-end phones, a static card when motion is off. */
@@ -137,20 +147,20 @@ private fun motionProfile(context: Context): MotionProfile {
  * from loading; the overlay only draws on top.
  */
 @Composable
-fun CelebrationHost(onOpenEmail: (String) -> Unit, content: @Composable (Modifier) -> Unit) {
+fun CelebrationHost(onOpenEmail: (String) -> Unit, content: @Composable (Modifier, (Boolean) -> Unit) -> Unit) {
     val vm: CelebrationViewModel = hiltViewModel()
     val active = vm.active
     val blur = remember { Animatable(0f) }
     LaunchedEffect(active) { blur.animateTo(if (active != null) 14f else 0f, tween(if (active != null) 380 else 260)) }
 
     Box(Modifier.fillMaxSize()) {
-        content(if (blur.value > 0.1f) Modifier.fillMaxSize().blur(blur.value.dp) else Modifier.fillMaxSize())
+        content(if (blur.value > 0.1f) Modifier.fillMaxSize().blur(blur.value.dp) else Modifier.fillMaxSize(), vm::setMailVisible)
         if (active != null) {
             val settings by vm.sound.collectAsStateWithLifecycle()
             CelebrationOverlay(
                 celebration = active,
                 soundEnabled = settings?.celebrationSound == true,
-                onDetails = { vm.dismiss(); onOpenEmail(active.entity.emailId) },
+                onDetails = { vm.openDetails(active.entity.emailId); onOpenEmail(active.entity.emailId) },
                 onClose = vm::dismiss,
             )
         }

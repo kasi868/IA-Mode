@@ -53,8 +53,8 @@ class MainActivity : ComponentActivity() {
             val s = state ?: return@setContent
             IAModeTheme(dynamic = s.dynamicColor) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    CelebrationHost(onOpenEmail = { deepLink = DeepLink.Mail(it) }) { modifier ->
-                        Box(modifier) { AppNavHost(s.onboardingDone, deepLink, onDeepLinkHandled = { deepLink = null }) }
+                    CelebrationHost(onOpenEmail = { deepLink = DeepLink.Mail(it) }) { modifier, setMailVisible ->
+                        Box(modifier) { AppNavHost(s.onboardingDone, deepLink, onDeepLinkHandled = { deepLink = null }, onMailRouteChanged = setMailVisible) }
                     }
                 }
             }
@@ -64,7 +64,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppVisibility.foreground = true
-        com.iamode.app.data.mail.MailSyncWorker.syncNow(this) // fresh mail understanding when the user opens the app
     }
 
     override fun onStop() {

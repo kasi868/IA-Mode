@@ -77,6 +77,7 @@ class MailDetailViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            repo.markViewed(emailId)
             repo.markDetailsViewed(emailId)
             hasCelebration.value = celebrations.forEmail(emailId) != null
         }

@@ -34,6 +34,8 @@ class ConversationRepositoryImpl @Inject constructor(
 
     override suspend fun upsert(conversation: Conversation) = conversationDao.upsert(conversation.toEntity())
 
+    override suspend fun claimForSend(id: String, now: Long): Boolean = conversationDao.claimForSend(id, now) == 1
+
     override suspend fun addMessage(message: Message): Boolean = messageDao.insert(message.toEntity()) != -1L
 
     override suspend fun recentMessages(conversationId: String, limit: Int) =

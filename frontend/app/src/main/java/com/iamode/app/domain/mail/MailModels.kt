@@ -50,7 +50,9 @@ object MailTabs {
         return buildSet {
             if (primary !in quiet) add(MailTab.INBOX)
             if (priority == MailPriority.HIGH || MailCategory.IMPORTANT in all) add(MailTab.IMPORTANT)
-            if (requiresReply || MailCategory.REPLY_NEEDED in all) add(MailTab.REPLY_NEEDED)
+            // A reply-needed label is an AI classification hint, not an everlasting task.  The
+            // mutable requiresReply state is cleared only after a reply actually succeeds.
+            if (requiresReply) add(MailTab.REPLY_NEEDED)
             if (MailCategory.DOCUMENT_REQUEST in all) add(MailTab.DOCUMENTS)
             if (MailCategory.INTERVIEW_INVITATION in all) add(MailTab.INTERVIEWS)
             if (all.any { it in career }) add(MailTab.OPPORTUNITIES)

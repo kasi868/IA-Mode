@@ -95,6 +95,8 @@ data class GmailAccountEntity(
     @PrimaryKey val email: String,
     val needsReauth: Boolean,
     val addedAt: Long,
+    /** Gmail History API checkpoint. Opaque provider state; never a credential. */
+    val historyId: String? = null,
 )
 
 /** Structured AI understanding only; JSON fields contain extracted metadata, never OAuth tokens or file contents. */
@@ -134,6 +136,8 @@ data class MailIntelligenceEntity(
     @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
     @ColumnInfo(defaultValue = "0") val requiresAttachment: Boolean = false,
     @ColumnInfo(defaultValue = "0") val containsEvent: Boolean = false,
+    /** Set when the user opens this card in IA Mode; independent of Gmail's read state. */
+    val viewedAt: Long? = null,
 )
 
 /** A proposal is inert until the user explicitly approves it in the app. */

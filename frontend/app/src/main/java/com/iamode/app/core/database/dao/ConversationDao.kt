@@ -35,6 +35,10 @@ interface ConversationDao {
     @Upsert
     suspend fun upsert(entity: ConversationEntity)
 
+    /** Atomically reserves a reply so a scheduler wake-up and a user tap cannot send it twice. */
+    @Query("UPDATE conversations SET status = 'SENDING', updatedAt = :now WHERE id = :id AND status IN ('PENDING_APPROVAL', 'QUEUED', 'CRISIS')")
+    suspend fun claimForSend(id: String, now: Long): Int
+
     @Query("DELETE FROM conversations")
     suspend fun deleteAll()
 }

@@ -13,6 +13,9 @@
     <!-- Only used to add an interview/event you approved (or an opted-in automation rule). -->
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Requested only after the user explicitly chooses to share a one-time current location. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Lets the user opt in to reliable background automation; Android still shows its own approval UI. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

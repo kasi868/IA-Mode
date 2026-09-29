@@ -11,6 +11,8 @@ import com.iamode.app.domain.model.Relationship
 import com.iamode.app.domain.model.ReplyStyle
 import com.iamode.app.domain.repository.ConversationRepository
 import com.iamode.app.domain.usecase.ConversationActionsUseCase
+import com.iamode.app.core.database.dao.GmailAccountDao
+import com.iamode.app.core.database.dao.OutlookAccountDao
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,6 +28,7 @@ data class ConversationUiState(
     val messages: List<Message> = emptyList(),
     val busy: Boolean = false,
     val error: String? = null,
+    val emailAccounts: List<String> = emptyList(),
 )
 
 @HiltViewModel
@@ -33,6 +36,8 @@ class ConversationViewModel @Inject constructor(
     savedState: SavedStateHandle,
     conversations: ConversationRepository,
     private val actions: ConversationActionsUseCase,
+    gmailAccounts: GmailAccountDao,
+    outlookAccounts: OutlookAccountDao,
 ) : ViewModel() {
 
     private val id: String = checkNotNull(savedState["id"])
@@ -45,9 +50,15 @@ class ConversationViewModel @Inject constructor(
     private val busy = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
 
-    val state: StateFlow<ConversationUiState> = combine(
+    private val coreState = combine(
         conversations.observe(id), conversations.observeMessages(id), busy.asStateFlow(), error.asStateFlow(),
     ) { c, m, b, e -> ConversationUiState(c, m, b, e) }
+    private val emailAccounts = combine(gmailAccounts.observeAll(), outlookAccounts.observeAll()) { gmail, outlook ->
+        (gmail.map { it.email } + outlook.map { it.email }).distinct()
+    }
+    val state: StateFlow<ConversationUiState> = combine(coreState, emailAccounts) { core, accounts ->
+        core.copy(emailAccounts = accounts)
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ConversationUiState())
 
     fun approve(text: String, handleChat: Boolean) = launchAction { actions.approve(id, text.trim(), handleChat) }

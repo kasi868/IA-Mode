@@ -113,7 +113,11 @@ fun HomeScreen(
                 }
             }
             IconButton(onClick = openContacts) { Icon(Icons.Filled.Contacts, tr("Contacts")) }
-            IconButton(onClick = openMail) { Icon(Icons.Filled.Email, tr("Mail")) }
+            IconButton(onClick = openMail) {
+                BadgedBox(badge = { if (state.unreadMailCount > 0) Badge { Text("${state.unreadMailCount}") } }) {
+                    Icon(Icons.Filled.Email, tr("Mail"))
+                }
+            }
             IconButton(onClick = openSettings) { Icon(Icons.Filled.Settings, tr("Settings")) }
         })
     }) { padding ->

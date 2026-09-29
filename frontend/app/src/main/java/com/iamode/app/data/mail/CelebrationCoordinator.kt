@@ -33,4 +33,12 @@ class CelebrationCoordinator @Inject constructor(
     }
 
     suspend fun forEmail(emailId: String) = dao.celebrationFor(emailId)
+
+    /** Consumes the currently visible achievement before navigation, preventing a route-change replay. */
+    suspend fun openDetails(emailId: String) {
+        val now = System.currentTimeMillis()
+        dao.markDetailsViewed(emailId, now)
+        dao.advance(emailId, com.iamode.app.domain.mail.CelebrationState.DETAILS_VIEWED.name,
+            listOf(com.iamode.app.domain.mail.CelebrationState.CELEBRATION_SHOWN.name))
+    }
 }

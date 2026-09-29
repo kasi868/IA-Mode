@@ -58,7 +58,7 @@ object AppModule {
             .openHelperFactory(SupportOpenHelperFactory(passphrase))
             // Every schema change must ship a Migration (schemas are exported to app/schemas).
             // Only a downgrade (installing an older build) wipes local data.
-            .addMigrations(IAModeDatabase.MIGRATION_1_2, IAModeDatabase.MIGRATION_2_3, IAModeDatabase.MIGRATION_3_4, IAModeDatabase.MIGRATION_4_5, IAModeDatabase.MIGRATION_5_6, IAModeDatabase.MIGRATION_6_7)
+            .addMigrations(IAModeDatabase.MIGRATION_1_2, IAModeDatabase.MIGRATION_2_3, IAModeDatabase.MIGRATION_3_4, IAModeDatabase.MIGRATION_4_5, IAModeDatabase.MIGRATION_5_6, IAModeDatabase.MIGRATION_6_7, IAModeDatabase.MIGRATION_7_8, IAModeDatabase.MIGRATION_8_9)
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
     }

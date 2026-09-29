@@ -4,7 +4,6 @@ import com.iamode.app.core.i18n.tr
 
 import android.content.Context
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -30,12 +29,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -58,6 +60,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -99,6 +103,7 @@ data class MailHomeState(
     val items: List<MailItem> = emptyList(),
     val actionsByEmail: Map<String, List<MailActionEntity>> = emptyMap(),
     val pendingCount: Int = 0,
+    val unreadCount: Int = 0,
     val loaded: Boolean = false,
 )
 
@@ -108,7 +113,13 @@ class MailHomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     val state = combine(repo.mail, repo.pendingActions) { items, actions ->
-        MailHomeState(items, actions.groupBy { it.emailId }, actions.count { it.actionType != MailActionType.REVIEW_EMAIL.name }, true)
+        MailHomeState(
+            items = items,
+            actionsByEmail = actions.groupBy { it.emailId },
+            pendingCount = actions.count { it.actionType != MailActionType.REVIEW_EMAIL.name },
+            unreadCount = items.count { !it.entity.archived && it.entity.viewedAt == null },
+            loaded = true,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MailHomeState())
 
     private val requested = MutableStateFlow(false)
@@ -125,6 +136,10 @@ class MailHomeViewModel @Inject constructor(
     }
 
     fun archive(emailId: String, archived: Boolean, done: (String) -> Unit = {}) = viewModelScope.launch { done(repo.setArchived(emailId, archived)) }
+    fun markRead(emailId: String, done: (String) -> Unit = {}) = viewModelScope.launch { done(repo.markRead(emailId)) }
+    fun markAllRead(done: (String) -> Unit = {}) = viewModelScope.launch {
+        done(repo.markAllRead(state.value.items.filter { !it.entity.archived && it.entity.viewedAt == null }.map { it.emailId }))
+    }
 }
 
 private val tabs = listOf(
@@ -146,6 +161,8 @@ fun MailHomeScreen(
     val snackbar = remember { SnackbarHostState() }
     val seen = remember { mutableSetOf<String>() }
     val haptics = rememberHaptics()
+    var showMarkAllDialog by remember { mutableStateOf(false) }
+    var markingAllRead by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -153,6 +170,10 @@ fun MailHomeScreen(
                 title = { Text(tr("Mail"), fontWeight = FontWeight.SemiBold) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, tr("Back")) } },
                 actions = {
+                    IconButton(onClick = { showMarkAllDialog = true }, enabled = state.unreadCount > 0 && !markingAllRead) {
+                        if (markingAllRead) CircularProgressIndicator(Modifier.width(20.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Filled.DoneAll, tr("Mark all unread mail as read"))
+                    }
                     IconButton(onClick = openApplications) { Icon(Icons.Filled.Work, tr("Job applications")) }
                     IconButton(onClick = openActions) {
                         BadgedBox(badge = { if (state.pendingCount > 0) Badge { AnimatedCounter(state.pendingCount) } }) {
@@ -182,7 +203,7 @@ fun MailHomeScreen(
                     })
                 }
             }
-            HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+            HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 0) { page ->
                 val tab = tabs[page]
                 val shown = state.items.filter { tab in it.tabs }
                 PullToRefreshBox(isRefreshing = syncing, onRefresh = { haptics.tick(); vm.refresh() }, modifier = Modifier.fillMaxSize()) {
@@ -202,6 +223,7 @@ fun MailHomeScreen(
                                     Entrance("$page-${item.emailId}", index, seen) {
                                         SwipeToArchive(
                                             archived = item.entity.archived,
+                                            unread = item.entity.viewedAt == null,
                                             onSwiped = {
                                                 vm.archive(item.emailId, !item.entity.archived) { msg ->
                                                     scope.launch {
@@ -209,6 +231,9 @@ fun MailHomeScreen(
                                                         if (r == SnackbarResult.ActionPerformed) vm.archive(item.emailId, item.entity.archived)
                                                     }
                                                 }
+                                            },
+                                            onMarkRead = {
+                                                vm.markRead(item.emailId) { msg -> scope.launch { snackbar.showSnackbar(msg) } }
                                             },
                                         ) {
                                             MailCard(
@@ -232,31 +257,58 @@ fun MailHomeScreen(
             }
         }
     }
+    if (showMarkAllDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!markingAllRead) showMarkAllDialog = false },
+            title = { Text(tr("Mark all as read?")) },
+            text = { Text(tr("This marks the unread mail currently in IA Mode as read in Gmail or Outlook. It may take a moment for a large inbox.")) },
+            confirmButton = {
+                FilledTonalButton(onClick = {
+                    markingAllRead = true
+                    vm.markAllRead { msg ->
+                        markingAllRead = false
+                        showMarkAllDialog = false
+                        scope.launch { snackbar.showSnackbar(msg) }
+                    }
+                }) { Text(tr("Mark all read")) }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { showMarkAllDialog = false }, enabled = !markingAllRead) { Text(tr("Cancel")) } },
+        )
+    }
 }
 
-/** Swipe left to archive (or unarchive in Archive). A haptic tick marks the point of no return. */
+/** Swipe left to archive (or unarchive); swipe right to mark an unread mail read. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SwipeToArchive(archived: Boolean, onSwiped: () -> Unit, content: @Composable () -> Unit) {
+private fun SwipeToArchive(archived: Boolean, unread: Boolean, onSwiped: () -> Unit, onMarkRead: () -> Unit, content: @Composable () -> Unit) {
     val haptics = rememberHaptics()
     val state = rememberSwipeToDismissBoxState(
-        confirmValueChange = { v -> if (v == SwipeToDismissBoxValue.EndToStart) { onSwiped(); true } else false },
+        confirmValueChange = { v ->
+            when (v) {
+                SwipeToDismissBoxValue.EndToStart -> { onSwiped(); true }
+                // Read mail remains in the list, so let the component settle back after firing
+                // the asynchronous mailbox operation rather than leaving the card displaced.
+                SwipeToDismissBoxValue.StartToEnd -> if (unread) { onMarkRead(); false } else false
+                else -> false
+            }
+        },
         positionalThreshold = { it * 0.35f },
     )
-    LaunchedEffect(state.targetValue) { if (state.targetValue == SwipeToDismissBoxValue.EndToStart) haptics.threshold() }
+    LaunchedEffect(state.targetValue) { if (state.targetValue != SwipeToDismissBoxValue.Settled) haptics.threshold() }
     SwipeToDismissBox(
         state = state,
-        enableDismissFromStartToEnd = false,
+        enableDismissFromStartToEnd = unread,
         backgroundContent = {
-            val active = state.targetValue == SwipeToDismissBoxValue.EndToStart
-            val bg by animateColorAsState(if (active) Color(0xFF12B886) else MaterialTheme.colorScheme.surfaceContainerHigh, label = "bg")
+            val markRead = state.targetValue == SwipeToDismissBoxValue.StartToEnd
+            val active = state.targetValue != SwipeToDismissBoxValue.Settled
+            val bg by animateColorAsState(if (active) if (markRead) Color(0xFF2563EB) else Color(0xFF12B886) else MaterialTheme.colorScheme.surfaceContainerHigh, label = "bg")
             val iconScale by animateFloatAsState(if (active) 1.2f else 0.85f, label = "icon")
-            Box(Modifier.fillMaxSize().background(bg, RoundedCornerShape(22.dp)).padding(horizontal = 24.dp), contentAlignment = Alignment.CenterEnd) {
+            Box(Modifier.fillMaxSize().background(bg, RoundedCornerShape(22.dp)).padding(horizontal = 24.dp), contentAlignment = if (markRead) Alignment.CenterStart else Alignment.CenterEnd) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (archived) tr("Move to Inbox") else tr("Archive"), color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                    Text(if (markRead) tr("Mark read") else if (archived) tr("Move to Inbox") else tr("Archive"), color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.width(8.dp))
-                    Icon(if (archived) Icons.Filled.Unarchive else Icons.Filled.Archive, null,
+                    Icon(if (markRead) Icons.Filled.DoneAll else if (archived) Icons.Filled.Unarchive else Icons.Filled.Archive, null,
                         tint = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.graphicsLayer { scaleX = iconScale; scaleY = iconScale })
                 }
@@ -273,7 +325,7 @@ fun MailCard(item: MailItem, actions: List<MailActionEntity>, onOpen: () -> Unit
     val interaction = remember { MutableInteractionSource() }
     Card(
         onClick = onOpen, interactionSource = interaction,
-        modifier = modifier.fillMaxWidth().pressScale(interaction).animateContentSize(), shape = RoundedCornerShape(22.dp),
+        modifier = modifier.fillMaxWidth().pressScale(interaction), shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -282,12 +334,12 @@ fun MailCard(item: MailItem, actions: List<MailActionEntity>, onOpen: () -> Unit
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(item.sender, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                        Text(item.sender, style = MaterialTheme.typography.titleSmall, fontWeight = if (item.entity.viewedAt == null) FontWeight.Bold else FontWeight.SemiBold,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         Spacer(Modifier.width(6.dp))
                         PriorityDot(item.priority)
                     }
-                    Text(item.entity.subject.orEmpty().ifBlank { tr("(no subject)") }, style = MaterialTheme.typography.bodyMedium,
+                    Text(item.entity.subject.orEmpty().ifBlank { tr("(no subject)") }, style = MaterialTheme.typography.bodyMedium, fontWeight = if (item.entity.viewedAt == null) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.sharedTransition("mail-subject-${item.emailId}"))
                 }
                 Text(friendlyTime(item.entity.receivedAt), style = MaterialTheme.typography.labelSmall,

@@ -28,7 +28,7 @@ enum class Relationship(val label: String) {
 enum class ReplyMode { AUTO, APPROVE }
 
 enum class ConversationStatus {
-    ANALYZING, PENDING_APPROVAL, QUEUED, WAITING, CALLBACK, CRISIS, ENDED, SKIPPED;
+    ANALYZING, PENDING_APPROVAL, QUEUED, SENDING, WAITING, CALLBACK, CRISIS, ENDED, SKIPPED;
 
     val isOpen: Boolean get() = this != ENDED && this != SKIPPED
 }

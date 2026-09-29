@@ -16,6 +16,7 @@ import com.iamode.app.domain.repository.SituationProvider
 import com.iamode.app.domain.usecase.BuildSessionSummaryUseCase
 import com.iamode.app.domain.usecase.ConversationActionsUseCase
 import com.iamode.app.domain.usecase.ToggleIAModeUseCase
+import com.iamode.app.data.mail.MailIntelligenceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -39,6 +40,7 @@ data class HomeUiState(
     val handling: List<Conversation> = emptyList(),
     val finished: List<Conversation> = emptyList(),
     val alertCount: Int = 0,
+    val unreadMailCount: Int = 0,
     /** Last finished session, shown as "While you were busy" while IA Mode is off. */
     val lastSummary: SessionSummary? = null,
 ) {
@@ -57,6 +59,7 @@ class HomeViewModel @Inject constructor(
     sessions: SessionRepository,
     conversations: ConversationRepository,
     alerts: AlertRepository,
+    mail: MailIntelligenceRepository,
     private val settings: SettingsRepository,
     private val situationProvider: SituationProvider,
     private val toggleMode: ToggleIAModeUseCase,
@@ -70,10 +73,12 @@ class HomeViewModel @Inject constructor(
         flow { while (true) { emit(situationProvider.current()); delay(30_000) } }
     }
 
+    private val unreadMail = mail.mail.map { items -> items.count { !it.entity.archived && it.entity.viewedAt == null } }
+
     val state: StateFlow<HomeUiState> = sessions.activeSession.flatMapLatest { session ->
         if (session == null) {
-            combine(situation, settings.settings, lastSummary) { sit, s, last ->
-                HomeUiState(situation = sit, manualSituation = s.manualSituation, lastSummary = last)
+            combine(situation, settings.settings, lastSummary, unreadMail) { sit, s, last, unread ->
+                HomeUiState(situation = sit, manualSituation = s.manualSituation, lastSummary = last, unreadMailCount = unread)
             }
         } else {
             combine(
@@ -81,13 +86,15 @@ class HomeViewModel @Inject constructor(
                 alerts.observeSince(session.startedAt),
                 situation,
                 settings.settings,
-            ) { list, alertList, sit, s ->
+                unreadMail,
+            ) { list, alertList, sit, s, unread ->
                 HomeUiState(
                     session = session, situation = sit, manualSituation = s.manualSituation,
                     needsYou = list.filter { it.status in NEEDS_YOU },
                     handling = list.filter { it.status in HANDLING },
                     finished = list.filter { !it.status.isOpen },
                     alertCount = alertList.size,
+                    unreadMailCount = unread,
                 )
             }
         }

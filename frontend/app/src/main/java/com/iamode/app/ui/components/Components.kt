@@ -79,6 +79,7 @@ fun statusLabel(c: Conversation): Pair<String, Color> = when (c.status) {
     ConversationStatus.ANALYZING -> tr("Reading…") to IAColors.Blue
     ConversationStatus.PENDING_APPROVAL -> (if (c.aiGenerated) tr("Needs approval") else tr("Reply yourself")) to IAColors.Amber
     ConversationStatus.QUEUED -> tr("Sending") to IAColors.Violet
+    ConversationStatus.SENDING -> tr("Sending") to IAColors.Violet
     ConversationStatus.WAITING -> (if (c.autopilot) tr("IA Mode handling") else tr("Waiting for them")) to IAColors.Green
     ConversationStatus.CALLBACK -> tr("Call back") to IAColors.Amber
     ConversationStatus.CRISIS -> tr("Needs you now") to IAColors.Red

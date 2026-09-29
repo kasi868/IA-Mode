@@ -60,7 +60,17 @@ fun MailCategory.look(): CategoryLook = when (this) {
 
 @Composable
 fun SenderAvatar(name: String, accent: Color, size: Int = 44) {
-    val initials = name.split(' ', '.', '@').filter { it.isNotBlank() }.take(2).joinToString("") { it.first().uppercase() }
+    // Provider badges are deliberately text-only: no remote avatar fetch, tracking pixel, or
+    // contact-image permission is needed for a recognisable, stable mail list.
+    val normalized = name.trim()
+    val lower = normalized.lowercase()
+    val initials = when {
+        "google.com" in lower || "gmail.com" in lower -> "G"
+        "microsoft.com" in lower || "outlook.com" in lower || "office365.com" in lower -> "M"
+        else -> normalized.split(' ', '.', '@', '_', '-').mapNotNull { token ->
+            token.firstOrNull { it.isLetterOrDigit() }?.uppercase()
+        }.take(2).joinToString("")
+    }
     Box(
         Modifier.size(size.dp).background(Brush.linearGradient(listOf(accent.copy(alpha = 0.95f), accent.copy(alpha = 0.55f))), CircleShape),
         contentAlignment = Alignment.Center,

@@ -148,13 +148,17 @@ class GmailRepository @Inject constructor(
     // =====================================================================================
 
     data class IntelligenceMail(val accountEmail: String, val mail: ParsedMail, val threadContext: List<String>)
+    data class HistoryCheckpoint(val accountEmail: String, val historyId: String)
+    data class IntelligenceFetch(val messages: List<IntelligenceMail>, val checkpoints: List<HistoryCheckpoint>)
+    private data class InboxScan(val refs: List<MessageRef>, val historyId: String?)
 
     /**
      * Recent inbox mail (all tabs, incl. promotions) not yet understood. [isKnown] skips mail already classified,
      * so each email costs at most one AI call.
      */
-    suspend fun fetchForIntelligence(limit: Int, newerThanDays: Int, isKnown: suspend (String) -> Boolean): List<IntelligenceMail> {
+    suspend fun fetchForIntelligence(limit: Int, newerThanDays: Int, isKnown: suspend (String) -> Boolean): IntelligenceFetch {
         val out = mutableListOf<IntelligenceMail>()
+        val checkpoints = mutableListOf<HistoryCheckpoint>()
         for (account in accounts.all()) {
             if (out.size >= limit) break
             val token = auth.accessToken(account.email)
@@ -167,14 +171,31 @@ class GmailRepository @Inject constructor(
             }
             if (account.needsReauth) accounts.upsert(account.copy(needsReauth = false))
             try {
-                val refs = api.list(bearer(token), "in:inbox newer_than:${newerThanDays}d", maxResults = 40).messages
-                for (ref in refs) {
-                    if (out.size >= limit) break
-                    if (isKnown(ref.id)) continue
+                val source = if (account.historyId == null) {
+                    // Bootstrap reads metadata for the configured recent window. Once those messages are understood,
+                    // profile.historyId becomes the durable incremental checkpoint.
+                    inboxScan(token, newerThanDays)
+                } else {
+                    try {
+                        historyScan(token, account.historyId)
+                    } catch (e: HttpException) {
+                        if (e.code() != 404) throw e
+                        // Gmail retains history for a limited period. Fall back safely to the bounded
+                        // bootstrap scan; never advance a cursor that Gmail has invalidated.
+                        accounts.upsert(account.copy(needsReauth = false, historyId = null))
+                        inboxScan(token, newerThanDays)
+                    }
+                }
+                val unseen = source.refs.filterNot { isKnown(it.id) }
+                val capacity = limit - out.size
+                for (ref in unseen.take(capacity)) {
                     val mail = GmailMessageParser.parse(api.get(bearer(token), ref.id))
                     if (mail.fromEmail == account.email) continue
                     out += IntelligenceMail(account.email, mail, threadTexts(token, mail))
                 }
+                // Do not checkpoint a partial batch. A later worker will retry the same history
+                // range and skip already-classified IDs, so transient AI/network errors cannot lose mail.
+                if (unseen.size <= capacity) source.historyId?.let { checkpoints += HistoryCheckpoint(account.email, it) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: HttpException) {
@@ -183,7 +204,39 @@ class GmailRepository @Inject constructor(
                 log.record("Mail", false, "${account.email}: network error while reading inbox")
             }
         }
-        return out
+        return IntelligenceFetch(out, checkpoints)
+    }
+
+    /** Retrieves lightweight IDs only; bodies are fetched below solely for unseen messages. */
+    private suspend fun inboxScan(token: String, newerThanDays: Int): InboxScan {
+        val refs = mutableListOf<MessageRef>()
+        var page: String? = null
+        do {
+            val response = api.list(bearer(token), "in:inbox newer_than:${newerThanDays}d", maxResults = 100, pageToken = page)
+            refs += response.messages
+            page = response.nextPageToken
+        } while (page != null)
+        return InboxScan(refs.distinctBy { it.id }, api.profile(bearer(token)).historyId)
+    }
+
+    /** Reads all changed message IDs before creating a checkpoint, so pagination cannot skip mail. */
+    private suspend fun historyScan(token: String, startHistoryId: String): InboxScan {
+        val refs = mutableListOf<MessageRef>()
+        var page: String? = null
+        var checkpoint: String? = null
+        do {
+            val response = api.history(bearer(token), startHistoryId, maxResults = 500, pageToken = page)
+            refs += response.history.flatMap { h -> h.messagesAdded.mapNotNull { it.message } }
+            checkpoint = response.historyId ?: checkpoint
+            page = response.nextPageToken
+        } while (page != null)
+        return InboxScan(refs.distinctBy { it.id }, checkpoint)
+    }
+
+    /** Commits only a checkpoint whose complete batch was classified successfully. */
+    suspend fun commitHistory(checkpoint: HistoryCheckpoint) {
+        val account = accounts.all().firstOrNull { it.email == checkpoint.accountEmail } ?: return
+        accounts.upsert(account.copy(historyId = checkpoint.historyId, needsReauth = false))
     }
 
     /** The user's own sent emails (bodies only, newest first), for on-device style learning. Not stored. */

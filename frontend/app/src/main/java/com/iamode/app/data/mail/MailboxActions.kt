@@ -59,7 +59,41 @@ class MailboxActions @Inject constructor(
             MailProviderKind.OUTLOOK -> outlook.markRead(account, emailId).unified()
         }
         audit("MAILBOX_MARK_READ", emailId, account, Actor.USER, r)
+        if (r == Result.Done) intelligence.markViewed(emailId, System.currentTimeMillis())
         return if (r is Result.Failed) r.reason else tr("Marked as read in %1\$s", (providerName(emailId)))
+    }
+
+    /**
+     * Marks the unread IA Mode inbox that is currently on-device as read in its source mailbox.
+     * Requests are deliberately sequential: it is a user operation, stays off the UI thread, and
+     * avoids a burst of provider API calls that could be rate-limited.
+     */
+    suspend fun markAllRead(emailIds: List<String>): String {
+        val ids = emailIds.distinct().take(500)
+        if (ids.isEmpty()) return tr("No unread mail")
+        var completed = 0
+        var failed = 0
+        ids.forEach { id ->
+            val account = intelligence.byEmailId(id)?.accountEmail
+            if (account == null) {
+                failed++
+                return@forEach
+            }
+            val result = when (MailIds.providerOf(id)) {
+                MailProviderKind.GMAIL -> gmail.markRead(account, id).unified()
+                MailProviderKind.OUTLOOK -> outlook.markRead(account, id).unified()
+            }
+            audit("MAILBOX_MARK_READ", id, account, Actor.USER, result)
+            if (result == Result.Done) {
+                intelligence.markViewed(id, System.currentTimeMillis())
+                completed++
+            } else failed++
+        }
+        return when {
+            failed == 0 -> tr("Marked %1\$s mail(s) as read", completed)
+            completed == 0 -> tr("Couldn't mark mail as read. Check the connected mailbox and try again.")
+            else -> tr("Marked %1\$s mail(s) as read; %2\$s couldn't be updated", completed, failed)
+        }
     }
 
     /** Gmail: label + remove from inbox. Outlook: move to a folder (created if missing). */

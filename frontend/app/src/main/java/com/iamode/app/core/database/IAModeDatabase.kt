@@ -48,7 +48,7 @@ import com.iamode.app.core.database.dao.MailIntelligenceDao
         DocumentSourceEntity::class, MutedSenderEntity::class, WritingStyleEntity::class,
         JobApplicationEntity::class, ApplicationEventEntity::class, OutlookAccountEntity::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = true,
 )
 abstract class IAModeDatabase : RoomDatabase() {
@@ -160,6 +160,20 @@ abstract class IAModeDatabase : RoomDatabase() {
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS `outlook_accounts` (`email` TEXT NOT NULL, `homeAccountId` TEXT NOT NULL, `needsReauth` INTEGER NOT NULL, `addedAt` INTEGER NOT NULL, PRIMARY KEY(`email`))")
+            }
+        }
+
+        /** v1.9: local mail-view state for the unread badge; Gmail's read state remains untouched. */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE mail_intelligence ADD COLUMN viewedAt INTEGER")
+            }
+        }
+
+        /** v2.0: Gmail incremental-sync checkpoint; OAuth credentials remain in the identity provider cache. */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gmail_accounts ADD COLUMN historyId TEXT")
             }
         }
     }

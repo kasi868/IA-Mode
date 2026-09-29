@@ -106,6 +106,11 @@ interface MailIntelligenceDao {
     @Query("SELECT * FROM mail_intelligence WHERE emailId = :emailId LIMIT 1") fun observe(emailId: String): Flow<MailIntelligenceEntity?>
     @Query("UPDATE mail_intelligence SET archived = :archived, updatedAt = :now WHERE emailId = :emailId")
     suspend fun setArchived(emailId: String, archived: Boolean, now: Long)
+    @Query("UPDATE mail_intelligence SET viewedAt = COALESCE(viewedAt, :now) WHERE emailId = :emailId")
+    suspend fun markViewed(emailId: String, now: Long)
+    /** A completed outbound reply resolves the reply-needed queue for this message. */
+    @Query("UPDATE mail_intelligence SET requiresReply = 0, category = CASE WHEN category = 'reply_needed' THEN 'general' ELSE category END, updatedAt = :now WHERE emailId = :emailId")
+    suspend fun markReplyHandled(emailId: String, now: Long)
     @Query("SELECT category, COUNT(*) AS n FROM mail_intelligence WHERE fromAddress = :address GROUP BY category")
     suspend fun senderHistory(address: String): List<CategoryCount>
     @Query("SELECT * FROM mail_intelligence WHERE fromAddress = :address") suspend fun fromSender(address: String): List<MailIntelligenceEntity>

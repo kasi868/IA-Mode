@@ -12,6 +12,7 @@ import com.iamode.app.domain.model.Message
 import com.iamode.app.domain.model.Relationship
 import com.iamode.app.domain.policy.ReplyPolicy
 import com.iamode.app.domain.policy.ReplyPolicy.Decision
+import com.iamode.app.domain.policy.SensitiveShareRequestDetector
 import com.iamode.app.domain.repository.AiRepository
 import com.iamode.app.domain.repository.AiRetryScheduler
 import com.iamode.app.domain.repository.AlertRepository
@@ -21,6 +22,7 @@ import com.iamode.app.domain.repository.ReplyScheduler
 import com.iamode.app.domain.repository.SessionRepository
 import com.iamode.app.domain.repository.SettingsRepository
 import com.iamode.app.domain.repository.SituationProvider
+import com.iamode.app.service.worker.MessageBurstCoordinator
 import java.util.UUID
 import javax.inject.Inject
 
@@ -37,6 +39,7 @@ class ProcessIncomingMessageUseCase @Inject constructor(
     private val retryScheduler: AiRetryScheduler,
     private val situationProvider: SituationProvider,
     private val endConversation: EndConversationUseCase,
+    private val burst: MessageBurstCoordinator,
 ) {
     suspend operator fun invoke(incoming: IncomingMessage) {
         // Mail is classified, proposed and approved exclusively by MailIntelligenceRepository.
@@ -81,7 +84,11 @@ class ProcessIncomingMessageUseCase @Inject constructor(
             alerts.add(AlertKind.NEW_MAIL, "New mail from ${conv.displayName}",
                 listOfNotNull(incoming.subject, incoming.text.take(200)).joinToString(": "), conv.id)
         }
-        analyzeAndAct(conv.id, incoming.text, incoming.externalId, isRetry = false)
+        // Give a person room to finish a thought split across several short notifications.
+        // Each arrival resets this timer; the guarded analyzer below still verifies it is latest.
+        burst.schedule(conv.id) {
+            if (sessions.current()?.id == conv.sessionId) analyzeAndAct(conv.id, incoming.text, incoming.externalId, isRetry = false)
+        }
     }
 
     /**
@@ -123,11 +130,16 @@ class ProcessIncomingMessageUseCase @Inject constructor(
         if (isRetry) notifier.cancel(fresh.id) // replace the "write it yourself" notification
 
         val a = out.analysis
-        val decision = ReplyPolicy.decide(
+        var decision = ReplyPolicy.decide(
             ReplyPolicy.Input(fresh.relationship, fresh.channel, fresh.displayName, fresh.autopilot, fresh.autoTurns,
                 hasOurReplies = history.any { it.fromMe }),
             a, settings,
         )
+        // A detected request for an email identity or location is always an explicit, per-message
+        // decision. This overrides relationship/autopilot settings and prevents accidental sharing.
+        SensitiveShareRequestDetector.detect(incomingText)?.let { request ->
+            decision = Decision.NeedsApproval("${request.name.lowercase().replace('_', ' ')} sharing always needs your approval", paused = true)
+        }
         var c = fresh.copy(
             tone = a.tone, style = a.style, language = a.language, summary = a.summary.ifBlank { fresh.summary },
             mentionsMoney = a.mentionsMoney, asksCommitment = a.asksCommitment, pendingReply = out.reply,

@@ -23,6 +23,10 @@ class SendReplyUseCase @Inject constructor(
         val c = conversations.get(conversationId) ?: return
         val text = c.pendingReply?.trim().orEmpty()
         if (text.isEmpty() || !c.status.isOpen) return
+        // This must happen before dispatch. UI approval and the undo scheduler can arrive at the
+        // same instant; exactly one caller is allowed to hand the reply to the chat app.
+        val claimedAt = System.currentTimeMillis()
+        if (!conversations.claimForSend(c.id, claimedAt)) return
         notifier.cancel(c.id)
 
         when (val result = sender.send(c, text)) {

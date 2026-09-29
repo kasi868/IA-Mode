@@ -5,7 +5,10 @@ import com.iamode.app.core.i18n.tr
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -57,6 +60,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -69,6 +75,8 @@ import com.iamode.app.domain.model.Channel
 import com.iamode.app.domain.model.Conversation
 import com.iamode.app.domain.model.ConversationStatus
 import com.iamode.app.domain.model.ReplyStyle
+import com.iamode.app.domain.policy.SensitiveShareRequest
+import com.iamode.app.domain.policy.SensitiveShareRequestDetector
 import com.iamode.app.domain.util.PhoneNumbers
 import com.iamode.app.ui.components.Avatar
 import com.iamode.app.ui.components.ChatBubble
@@ -121,7 +129,12 @@ fun ConversationScreen(onBack: () -> Unit, openDiagnostics: () -> Unit, vm: Conv
                 },
             )
         },
-        bottomBar = { if (c != null) ActionPanel(c, state.busy, vm, context) },
+        bottomBar = {
+            if (c != null) ActionPanel(
+                c, state.busy, vm, context, state.emailAccounts,
+                state.messages.lastOrNull { !it.fromMe }?.text?.let(SensitiveShareRequestDetector::detect),
+            )
+        },
     ) { padding ->
         if (c == null) return@Scaffold
         LazyColumn(Modifier.fillMaxSize().padding(padding).readableWidth(), state = listState, contentPadding = PaddingValues(12.dp)) {
@@ -157,7 +170,10 @@ private fun InfoCard(c: Conversation, openDiagnostics: () -> Unit) {
 }
 
 @Composable
-private fun ActionPanel(c: Conversation, busy: Boolean, vm: ConversationViewModel, context: Context) {
+private fun ActionPanel(
+    c: Conversation, busy: Boolean, vm: ConversationViewModel, context: Context,
+    emailAccounts: List<String>, shareRequest: SensitiveShareRequest?,
+) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.navigationBarsPadding().imePadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -173,7 +189,7 @@ private fun ActionPanel(c: Conversation, busy: Boolean, vm: ConversationViewMode
             ) { status ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     when (status) {
-                        ConversationStatus.PENDING_APPROVAL -> ApprovalPanel(c, busy, vm)
+                        ConversationStatus.PENDING_APPROVAL -> ApprovalPanel(c, busy, vm, context, emailAccounts, shareRequest)
                         ConversationStatus.QUEUED -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(Modifier.weight(1f)) {
                                 Countdown(c.sendAt, c.updatedAt)
@@ -182,6 +198,7 @@ private fun ActionPanel(c: Conversation, busy: Boolean, vm: ConversationViewMode
                             OutlinedButton(onClick = vm::undo) { Text(tr("Undo")) }
                             Button(onClick = vm::sendNow) { Text(tr("Send now")) }
                         }
+                        ConversationStatus.SENDING -> Text(tr("Sendingâ€¦"), style = MaterialTheme.typography.bodyMedium, color = IAColors.Grey)
                         ConversationStatus.CALLBACK -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             phoneNumber(c)?.let { n -> Button(onClick = { dial(context, n) }) { Text(tr("Call back")) } }
                             OutlinedButton(onClick = vm::markCalledBack) { Text(tr("Mark as called")) }
@@ -202,9 +219,13 @@ private fun ActionPanel(c: Conversation, busy: Boolean, vm: ConversationViewMode
 }
 
 @Composable
-private fun ApprovalPanel(c: Conversation, busy: Boolean, vm: ConversationViewModel) {
+private fun ApprovalPanel(
+    c: Conversation, busy: Boolean, vm: ConversationViewModel, context: Context,
+    emailAccounts: List<String>, shareRequest: SensitiveShareRequest?,
+) {
     var text by rememberSaveable(c.pendingReply) { mutableStateOf(c.pendingReply.orEmpty()) }
     val haptics = LocalHapticFeedback.current
+    SensitiveShareProposal(shareRequest, emailAccounts, context, busy, onReplySelected = { text = it })
     OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text(tr("Reply")) }, minLines = 2, maxLines = 6)
     if (c.aiGenerated) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -220,6 +241,77 @@ private fun ApprovalPanel(c: Conversation, busy: Boolean, vm: ConversationViewMo
         OutlinedButton(onClick = { vm.approve(text, handleChat = false) }, enabled = text.isNotBlank() && !busy) { Text(tr("Send once")) }
     }
     TextButton(onClick = vm::dontReply, enabled = !busy) { Text(tr("Don't reply")) }
+}
+
+/** Privacy-sensitive values are placed in the editable draft only; approval below is still required to send. */
+@Composable
+private fun SensitiveShareProposal(
+    request: SensitiveShareRequest?, emailAccounts: List<String>, context: Context, busy: Boolean,
+    onReplySelected: (String) -> Unit,
+) {
+    request ?: return
+    when (request) {
+        SensitiveShareRequest.EMAIL -> {
+            Text(tr("They asked for a professional email. Select exactly one address to include; nothing is sent until you approve."),
+                style = MaterialTheme.typography.bodySmall, color = IAColors.Grey)
+            if (emailAccounts.isEmpty()) {
+                Text(tr("No connected email account is available. Add one in Settings or write the reply yourself."), style = MaterialTheme.typography.bodySmall)
+            } else {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(emailAccounts, key = { it }) { address ->
+                        FilterChip(selected = false, onClick = { onReplySelected("You can reach me at $address.") },
+                            label = { Text(address) }, enabled = !busy)
+                    }
+                }
+            }
+        }
+        SensitiveShareRequest.CURRENT_LOCATION -> CurrentLocationProposal(context, busy, onReplySelected)
+        SensitiveShareRequest.LIVE_LOCATION -> {
+            Text(tr("Live location is confidential. IA Mode cannot start a hidden or background live-location session. Approve a reply, then use WhatsApp's attachment menu to choose the duration and stop sharing yourself."),
+                style = MaterialTheme.typography.bodySmall, color = IAColors.Grey)
+            OutlinedButton(onClick = { onReplySelected("I can share my live location in WhatsApp after you confirm the duration.") }, enabled = !busy) {
+                Text(tr("Prepare live-location reply"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentLocationProposal(context: Context, busy: Boolean, onReplySelected: (String) -> Unit) {
+    var locationError by remember { mutableStateOf<String?>(null) }
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted[android.Manifest.permission.ACCESS_FINE_LOCATION] == true || granted[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            oneTimeLocation(context, onReplySelected) { locationError = it }
+        } else locationError = tr("Location permission was not granted. No location was shared.")
+    }
+    Text(tr("Current location is confidential. It will be requested once, shown in the editable reply, and only sent after your approval."),
+        style = MaterialTheme.typography.bodySmall, color = IAColors.Grey)
+    OutlinedButton(onClick = {
+        val allowed = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (allowed) oneTimeLocation(context, onReplySelected) { locationError = it }
+        else permissions.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+    }, enabled = !busy) { Text(tr("Get current location")) }
+    locationError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+}
+
+private fun oneTimeLocation(context: Context, onLocation: (String) -> Unit, onError: (String) -> Unit) {
+    val manager = context.getSystemService(LocationManager::class.java)
+    val provider = when {
+        manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+        manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+        else -> null
+    } ?: return onError(tr("Turn on Location to share your current location."))
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        manager.getCurrentLocation(provider, null, ContextCompat.getMainExecutor(context)) { location ->
+            if (location == null) onError(tr("Couldn't get a current location. Try again outside or with Location enabled."))
+            else onLocation("My current location: https://maps.google.com/?q=${location.latitude},${location.longitude}")
+        }
+    } else {
+        val location = manager.getLastKnownLocation(provider)
+        if (location == null) onError(tr("Couldn't get a current location. Try again outside or with Location enabled."))
+        else onLocation("My current location: https://maps.google.com/?q=${location.latitude},${location.longitude}")
+    }
 }
 
 @Composable

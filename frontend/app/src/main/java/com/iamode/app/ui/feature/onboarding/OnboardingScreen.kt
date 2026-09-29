@@ -144,6 +144,7 @@ fun PermissionList() {
     var refresh by remember { mutableIntStateOf(0) }
     var guidedSetupActive by rememberSaveable { mutableStateOf(false) }
     var guidedPermissionIndex by rememberSaveable { mutableIntStateOf(0) }
+    var showOptional by rememberSaveable { mutableStateOf(false) }
     val permissionEntries = remember { AppPermission.entries.toList() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { refresh++ }
     val runtimeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
@@ -182,15 +183,19 @@ fun PermissionList() {
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(tr("IA Mode needs a few permissions"), style = MaterialTheme.typography.titleMedium)
-        Text(tr("Everything is processed on your phone. Only the few messages needed to write a reply are sent to the AI, and nothing is stored on the server."),
-            style = MaterialTheme.typography.bodyMedium)
+        val required = permissionEntries.filter { it.required }
+        val grantedRequired = required.count { AppPermissions.isGranted(context, it) }
+        Text(tr("Set up IA Mode"), style = MaterialTheme.typography.headlineSmall)
+        Text(tr("%1\$s of %2\$s essential accesses are ready", grantedRequired, required.size),
+            style = MaterialTheme.typography.titleSmall, color = if (grantedRequired == required.size) IAColors.Green else MaterialTheme.colorScheme.primary)
+        Text(tr("Choose what IA Mode can do. You can change any access later, and optional features stay off until you enable them."),
+            style = MaterialTheme.typography.bodyMedium, color = IAColors.Grey)
         Button(
             onClick = {
                 guidedPermissionIndex = 0
                 guidedSetupActive = true
             },
-            enabled = !guidedSetupActive && permissionEntries.any { !AppPermissions.isGranted(context, it) },
+            enabled = !guidedSetupActive && required.any { !AppPermissions.isGranted(context, it) },
             modifier = Modifier.fillMaxWidth(),
         ) { Text(tr("Allow all (guided)")) }
         if (guidedSetupActive) {
@@ -205,7 +210,8 @@ fun PermissionList() {
                 Text(tr("Stop guided setup"))
             }
         }
-        AppPermission.entries.forEach { p ->
+        Text(tr("Essential for chat replies"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+        permissionEntries.filter { it.required }.forEach { p ->
             val granted = remember(refresh) { AppPermissions.isGranted(context, p) }
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -220,6 +226,27 @@ fun PermissionList() {
                         if (runtime != null) runtimeLauncher.launch(runtime)
                         else openSpecialAccess(p, settingsLauncher)
                     }) { Text(tr("Allow")) }
+                }
+            }
+        }
+        OutlinedButton(onClick = { showOptional = !showOptional }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (showOptional) tr("Hide optional improvements") else tr("Optional improvements"))
+        }
+        androidx.compose.animation.AnimatedVisibility(showOptional) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr("Optional features"), style = MaterialTheme.typography.titleMedium)
+                permissionEntries.filterNot { it.required }.forEach { p ->
+                    val granted = remember(refresh) { AppPermissions.isGranted(context, p) }
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(tr(p.title), style = MaterialTheme.typography.bodyMedium)
+                            Text(tr(p.why), style = MaterialTheme.typography.labelSmall, color = IAColors.Grey)
+                        }
+                        if (granted) Icon(Icons.Filled.CheckCircle, tr("Granted"), tint = IAColors.Green)
+                        else OutlinedButton(onClick = {
+                            AppPermissions.runtimePermission(p)?.let(runtimeLauncher::launch) ?: openSpecialAccess(p, settingsLauncher)
+                        }) { Text(tr("Allow")) }
+                    }
                 }
             }
         }

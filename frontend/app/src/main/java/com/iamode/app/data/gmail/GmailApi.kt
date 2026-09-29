@@ -28,7 +28,12 @@ import retrofit2.http.Query
 )
 @Serializable data class GmailThread(val id: String, val messages: List<GmailMessage> = emptyList())
 @Serializable data class SendRequest(val raw: String, val threadId: String? = null)
-@Serializable data class GmailProfile(val emailAddress: String)
+@Serializable data class GmailProfile(val emailAddress: String, val historyId: String? = null)
+@Serializable data class HistoryMessageAdded(val message: MessageRef? = null)
+@Serializable data class GmailHistory(val messagesAdded: List<HistoryMessageAdded> = emptyList())
+@Serializable data class HistoryResponse(
+    val history: List<GmailHistory> = emptyList(), val historyId: String? = null, val nextPageToken: String? = null,
+)
 @Serializable data class ModifyRequest(val addLabelIds: List<String> = emptyList(), val removeLabelIds: List<String> = emptyList())
 @Serializable data class GmailLabel(val id: String, val name: String, val type: String = "user")
 @Serializable data class LabelsResponse(val labels: List<GmailLabel> = emptyList())
@@ -48,7 +53,19 @@ interface GmailApi {
         @Header("Authorization") auth: String,
         @Query("q") query: String,
         @Query("maxResults") maxResults: Int = 20,
+        @Query("pageToken") pageToken: String? = null,
     ): ListMessagesResponse
+
+    /** Changes since a previously committed Gmail history ID.  A 404 means the checkpoint expired. */
+    @GET("gmail/v1/users/me/history")
+    suspend fun history(
+        @Header("Authorization") auth: String,
+        @Query("startHistoryId") startHistoryId: String,
+        @Query("historyTypes") historyTypes: String = "messageAdded",
+        @Query("labelId") labelId: String = "INBOX",
+        @Query("maxResults") maxResults: Int = 100,
+        @Query("pageToken") pageToken: String? = null,
+    ): HistoryResponse
 
     @GET("gmail/v1/users/me/messages/{id}")
     suspend fun get(

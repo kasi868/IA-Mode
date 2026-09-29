@@ -17,9 +17,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -114,7 +118,7 @@ fun SettingsScreen(onBack: () -> Unit, openPermissions: () -> Unit, openDiagnost
                 label = { Text(tr("Your name (email sign-off)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             ChipRow { Gender.entries.forEach { g -> FilterChip(s.gender == g, { vm.update { it.copy(gender = g) } }, { Text(tr(g.label)) }) } }
 
-            SectionTitle(tr("Turn on automatically"))
+            SettingsDisclosure(tr("Automation"), tr("Driving, meetings and schedules")) {
             SettingRow(tr("When I start driving or riding"), drivingHint
                 ?: tr("Turns off again when you stop")) {
                 Switch(s.autoMode.whenDriving, { vm.setAutoDriving(it) })
@@ -132,7 +136,9 @@ fun SettingsScreen(onBack: () -> Unit, openPermissions: () -> Unit, openDiagnost
             Text(tr("If you switch IA Mode off during an automatic session, it stays off until that meeting, drive or schedule ends. ") +
                 tr("IA Mode never switches off a session you started yourself."),
                 style = MaterialTheme.typography.labelSmall, color = IAColors.Grey)
+            }
 
+            SettingsDisclosure(tr("Messaging behavior"), tr("Apps, relationship rules, safety limits and missed calls")) {
             SectionTitle(tr("Apps"))
             listOf(Channel.WHATSAPP, Channel.WHATSAPP_BUSINESS, Channel.TELEGRAM, Channel.INSTAGRAM).forEach { app ->
                 SettingRow(tr(app.label), if (app == Channel.INSTAGRAM) tr("Direct messages only") else null) {
@@ -210,7 +216,9 @@ fun SettingsScreen(onBack: () -> Unit, openPermissions: () -> Unit, openDiagnost
                     VehicleType.entries.forEach { v -> FilterChip(s.vehicleType == v, { vm.update { it.copy(vehicleType = v) } }, { Text(tr(v.label)) }) }
                 }
             }
+            }
 
+            SettingsDisclosure(tr("Appearance, email & accounts"), tr("Theme, notifications, Gmail, Outlook and email intelligence")) {
             SectionTitle(tr("Appearance and notifications"))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 SettingRow(tr("Use wallpaper colors"), tr("Match your phone's Material You theme")) {
@@ -239,6 +247,7 @@ fun SettingsScreen(onBack: () -> Unit, openPermissions: () -> Unit, openDiagnost
             OutlookSection()
 
             EmailIntelligenceSection()
+            }
 
             SectionTitle(tr("Privacy"))
             SettingRow(tr("Send crash reports"), tr("Helps fix bugs. Never includes messages, names or numbers")) {
@@ -264,6 +273,31 @@ fun SettingsScreen(onBack: () -> Unit, openPermissions: () -> Unit, openDiagnost
             confirmButton = { TextButton(onClick = { vm.deleteAllData(); confirmDelete = false }) { Text(tr("Delete")) } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(tr("Cancel")) } },
         )
+    }
+}
+
+/** Keeps the primary settings page scannable; detailed controls open only when needed. */
+@Composable
+private fun SettingsDisclosure(title: String, summary: String, content: @Composable () -> Unit) {
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    Card(
+        onClick = { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    if (expanded) tr("Collapse") else tr("Expand"))
+            }
+            AnimatedVisibility(expanded) {
+                Column(Modifier.padding(top = 8.dp)) { content() }
+            }
+        }
     }
 }
 

@@ -117,6 +117,9 @@ class MailActionExecutor @Inject constructor(
                 workflow.advance(a.emailId, CelebrationState.ACTION_COMPLETED.name,
                     CelebrationState.entries.filter { it.ordinal >= CelebrationState.CELEBRATION_SHOWN.ordinal &&
                         it != CelebrationState.ACTION_COMPLETED }.map { it.name })
+                if (type in setOf(MailActionType.SEND_DOCUMENT_REPLY, MailActionType.SEND_REPLY, MailActionType.SEND_FOLLOW_UP)) {
+                    intelligence.markReplyHandled(a.emailId, now)
+                }
                 if (type == MailActionType.SEND_FOLLOW_UP) runCatching { tracker.onFollowUpSent(fresh.payloadJson) }
                 log.record("Mail", true, "${type.label}: done")
                 Outcome.Done(message)

@@ -91,6 +91,7 @@ class MailIntelligenceRepository @Inject constructor(
     val allSelections = workflow.observeAllSelections()
     val allCalendars = workflow.observeAllCalendars()
     suspend fun actionOnce(id: String) = actions.get(id)
+    suspend fun markViewed(emailId: String) = intelligence.markViewed(emailId, System.currentTimeMillis())
 
     // ---------------- classification (background sync) ----------------
 
@@ -98,21 +99,28 @@ class MailIntelligenceRepository @Inject constructor(
     suspend fun sync(limit: Int = 15): List<String> {
         // Gmail and Outlook share the budget; each email costs at most one AI call.
         val known: suspend (String) -> Boolean = { intelligence.byEmailId(it) != null }
-        val fromGmail = gmail.fetchForIntelligence(limit, newerThanDays = 7, isKnown = known)
+        val gmailFetch = gmail.fetchForIntelligence(limit, newerThanDays = 7, isKnown = known)
+        val fromGmail = gmailFetch.messages
         val batch = fromGmail + outlook.fetchForIntelligence((limit - fromGmail.size).coerceAtLeast(0), 7, known)
         val auto = mutableListOf<String>()
+        val gmailMessageIds = fromGmail.map { it.mail.gmailId }.toSet()
+        val failedGmailAccounts = mutableSetOf<String>()
+        var stoppedForQuota = false
         for (m in batch) {
             try {
                 auto += classify(m)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: HttpException) {
+                if (m.mail.gmailId in gmailMessageIds) failedGmailAccounts += m.accountEmail
                 log.record("Mail", false, "Understanding an email failed: HTTP ${e.code()}")
-                if (e.code() == 429) break // free-tier quota: stop and try again later
+                if (e.code() == 429) { stoppedForQuota = true; break } // free-tier quota: stop and try again later
             } catch (e: Exception) {
+                if (m.mail.gmailId in gmailMessageIds) failedGmailAccounts += m.accountEmail
                 log.record("Mail", false, "Understanding an email failed: ${e.javaClass.simpleName}")
             }
         }
+        if (!stoppedForQuota) gmailFetch.checkpoints.filterNot { it.accountEmail in failedGmailAccounts }.forEach { gmail.commitHistory(it) }
         if (batch.isNotEmpty()) log.record("Mail", true, "Understood ${batch.size} new email(s)")
         return auto
     }
@@ -388,6 +396,7 @@ class MailIntelligenceRepository @Inject constructor(
 
     suspend fun setArchived(emailId: String, archived: Boolean): String = mailbox.setArchived(emailId, archived)
     suspend fun markRead(emailId: String): String = mailbox.markRead(emailId)
+    suspend fun markAllRead(emailIds: List<String>): String = mailbox.markAllRead(emailIds)
     suspend fun moveTo(emailId: String, label: String): String = mailbox.moveTo(emailId, label)
     suspend fun gmailLabels(emailId: String): List<String> = mailbox.labels(emailId)
 

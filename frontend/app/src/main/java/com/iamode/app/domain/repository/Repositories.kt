@@ -24,6 +24,8 @@ interface ConversationRepository {
     suspend fun get(id: String): Conversation?
     suspend fun findOpen(channel: Channel, address: String, sessionId: String): Conversation?
     suspend fun upsert(conversation: Conversation)
+    /** Atomically reserve a pending or queued reply before it is handed to a channel. */
+    suspend fun claimForSend(id: String, now: Long): Boolean
     /** Returns false when the message was already stored (de-duplication). */
     suspend fun addMessage(message: Message): Boolean
     suspend fun recentMessages(conversationId: String, limit: Int): List<Message>

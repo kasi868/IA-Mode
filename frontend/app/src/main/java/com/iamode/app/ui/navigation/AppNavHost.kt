@@ -15,6 +15,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -23,6 +24,7 @@ import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -148,8 +150,13 @@ private fun NavGraphBuilder.screen(
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun AppNavHost(onboardingDone: Boolean, deepLink: DeepLink?, onDeepLinkHandled: () -> Unit) {
+fun AppNavHost(onboardingDone: Boolean, deepLink: DeepLink?, onDeepLinkHandled: () -> Unit, onMailRouteChanged: (Boolean) -> Unit = {}) {
     val nav = rememberNavController()
+    val currentEntry by nav.currentBackStackEntryAsState()
+    LaunchedEffect(currentEntry?.destination?.route) {
+        val route = currentEntry?.destination?.route.orEmpty()
+        onMailRouteChanged(route == Routes.MAIL_INTELLIGENCE || route == Routes.MAIL_DETAIL || route == Routes.OPPORTUNITIES)
+    }
     // Decided once: changing a NavHost's start destination later would reset the back stack.
     val start = remember { if (onboardingDone) Routes.HOME else Routes.ONBOARDING }
 
